@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-app-service
+  annotations:
+    # AWS-specific annotations for Load Balancer
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"  # Network Load Balancer
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"  # Балансировка между AZ
+    service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "cert"  # SSL сертификат
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"  # Протокол к подам
+    service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout: "60"  # Таймаут соединения
+    service.beta.kubernetes.io/aws-load-balancer-proxy-protocol: "*"  # Передача реальных IP
+spec:
+  selector:
+    app: web-app
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80      # Порт сервиса (лучше использовать только HTTPS в prod)
+      targetPort: http  # Порт пода
+    - name: https
+      protocol: TCP
+      port: 443     # HTTPS порт
+      targetPort: http  # Перенаправление на HTTP порт пода
+  type: LoadBalancer  # Внешний балансировщик нагрузки
+  externalTrafficPolicy: Local  # Сохранение client IP и оптимизация трафика
+  healthCheckNodePort: 30000    # Порт для health check ноды
+  sessionAffinity: ClientIP     # Sticky sessions по IP
