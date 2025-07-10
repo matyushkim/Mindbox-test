@@ -1,0 +1,9 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: web-app-pdb
+spec:
+  minAvailable: 50%  # Гарантия что минимум половина подов будет доступна при добровольных нарушениях
+  selector:
+    matchLabels:
+      app: web-app
