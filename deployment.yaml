@@ -1,0 +1,150 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-app
+  labels:
+    app: web-app
+    # Стандартизированные метки для мониторинга и управления
+    app.kubernetes.io/name: web-app       # Идентификатор приложения
+    app.kubernetes.io/version: "1.0.0"    # Версия приложения (семантическое версионирование)
+    app.kubernetes.io/component: frontend # Компонент системы
+spec:
+  replicas: 5  # Количество реплик: 4 для нагрузки + 1 для отказоустойчивости
+  minReadySeconds: 15  # Увеличиваем для гарантии полной инициализации
+  progressDeadlineSeconds: 600  # Таймаут для развертывания (10 минут)
+  revisionHistoryLimit: 5  # Хранение 5 ревизий для возможного rollback
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%  # Более гибкое масштабирование при обновлениях
+      maxUnavailable: 20%  # Меньший процент недоступных подов
+  selector:
+    matchLabels:
+      app: web-app
+  template:
+    metadata:
+      labels:
+        app: web-app
+        app.kubernetes.io/name: web-app
+        app.kubernetes.io/version: "1.0.0"
+      annotations:
+        # Аннотации для интеграции с Prometheus
+        prometheus.io/scrape: "true"   # Разрешить сбор метрик
+        prometheus.io/port: "80"      # Порт для метрик
+        prometheus.io/path: "/metrics" # URL path для метрик
+        # Аннотации для Istio (если используется service mesh)
+        traffic.sidecar.istio.io/excludeOutboundPorts: "80" # Исключить порт из обработки Istio
+    spec:
+      terminationGracePeriodSeconds: 60  # Время на graceful shutdown
+      # Распределение подов по зонам доступности и нодам
+      topologySpreadConstraints:
+        - maxSkew: 1  # Максимальная разница в количестве подов между зонами
+          topologyKey: topology.kubernetes.io/zone  # Критерий распределения - зоны доступности
+          whenUnsatisfiable: DoNotSchedule  # Жесткое требование
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname  # Распределение по нодам
+          whenUnsatisfiable: ScheduleAnyway  # Мягкое требование
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:  # Обязательное правило
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - web-app
+            topologyKey: topology.kubernetes.io/zone  # Не размещать в одной зоне
+          preferredDuringSchedulingIgnoredDuringExecution:  # Предпочтительное правило
+          - weight: 100  # Вес правила
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - web-app
+              topologyKey: kubernetes.io/hostname  # Стараться не размещать на одной ноде
+      containers:
+      - name: web-app
+        image: your-registry/web-app:1.0.0   # Используем явную версию (не latest)
+        imagePullPolicy: IfNotPresent  # Политика загрузки образа
+        ports:
+        - name: http  # Именованный порт для удобства ссылок
+          containerPort: 80
+          protocol: TCP
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 20"]  # Задержка перед остановкой для graceful shutdown
+        # Проверка жизнеспособности
+        livenessProbe: 
+          httpGet:
+            path: /health  # Эндпоинт здоровья
+            port: http
+          initialDelaySeconds: 20  # Задержка перед первой проверкой (увеличиваем для тяжелых инициализаций)
+          periodSeconds: 10       # Периодичность проверок
+          timeoutSeconds: 5        # Таймаут проверки
+          failureThreshold: 3      # Количество неудач перед рестартом
+        # Проверка готовности
+        readinessProbe:
+          httpGet:
+            path: /ready  # Эндпоинт готовности
+            port: http
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 2  # Количество успешных проверок для перевода в ready
+          failureThreshold: 3 # Количество неудач перед переводом в not ready
+        # Ограничения ресурсов
+        resources:
+          requests:  # Гарантированные ресурсы
+            memory: "128Mi"
+            cpu: "200m"  # Увеличиваем для быстрого старта
+          limits:    # Максимальные ресурсы
+            memory: "256Mi" # Даем буфер для памяти
+            cpu: "1"  # Лимит для обработки пиков
+        # Настройки безопасности
+        securityContext:
+          allowPrivilegeEscalation: false  # Запрет повышения привилегий
+          readOnlyRootFilesystem: true    # Только для чтения root FS
+          capabilities:
+            drop:
+              - ALL  # Удаление всех Linux capabilities
+          runAsNonRoot: true  # Запрет работы от root
+          runAsUser: 1000     # Запуск от конкретного пользователя
+          seccompProfile:     # Профиль безопасности
+            type: RuntimeDefault
+        # Монтирование тома для кэша
+        volumeMounts:
+        - name: cache-volume
+          mountPath: /tmp/cache
+      # Добавляем sidecar-контейнер с Redis для кэширования																							
+      - name: redis-cache
+        image: redis:alpine:1.0.0  # Используем явную версию тега
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        ports:
+        - containerPort: 6379
+          name: redis
+        volumeMounts:
+        - name: cache-volume
+          mountPath: /data
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1001  # Другой пользователь для изоляции
+      volumes:
+      - name: cache-volume
+        emptyDir:
+          sizeLimit: 1Gi  # Лимит размера кэша
+      # Толерантность к taints нод
+      tolerations:
+      - key: "dedicated"
+        operator: "Equal"
+        value: "web-app"
+        effect: "NoSchedule"  # Разрешение работать на нодах с этим taint
+      priorityClassName: medium-priority  # Приоритет планирования
