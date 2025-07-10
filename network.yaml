@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-app-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: web-app
+  policyTypes:
+  - Ingress  # Правила для входящего трафика
+  - Egress   # Правила для исходящего трафика
+  ingress:
+  - ports:
+    - port: 80  # Разрешить входящий HTTP трафик
+      protocol: TCP
+  egress:
+  - ports:
+    - port: 80   # Исходящий HTTP
+      protocol: TCP
+    - port: 443  # Исходящий HTTPS
+      protocol: TCP
+    - port: 53   # DNS запросы
+      protocol: UDP
